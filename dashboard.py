@@ -164,43 +164,82 @@ X_predict = pd.DataFrame(input_data)[expected_columns]
 # 5. EXECUTE PREDICTION
 # ==========================================
 st.markdown("---")
-if st.button("RUN PREDICTIVE ANALYSIS", type="primary", use_container_width=True):
-    with st.spinner("Executing XGBoost Math & Monte Carlo Risk Simulation..."):
+if st.button("RUN PREDICTIVE ANALYSIS & RISK SIMULATION", type="primary", use_container_width=True):
+    with st.spinner("Executing XGBoost Math & 1,000 Monte Carlo Simulations..."):
         try:
-            # 1. Run the Math
+            # --- 1. THE BASELINE PREDICTION (The "Expected" Scenario) ---
             prediction = model.predict(X_predict)[0]
-            final_revenue = max(prediction, 0) # Prevent negative box office
-            roi = ((final_revenue - budget) / budget) * 100
+            base_revenue = max(prediction, 0) 
+            base_roi = ((base_revenue - budget) / budget) * 100
             
-            # 2. Display Top-Level Metrics
-            st.success("Analysis Complete!")
+            # --- 2. THE MONTE CARLO SIMULATION (The "Reality Check") ---
+            n_simulations = 1000
+            
+            # Copy our perfectly formatted single row 1,000 times
+            X_sim = pd.concat([X_predict] * n_simulations, ignore_index=True)
+            
+            # Inject Chaos (Randomness) into the budget and hype using Normal Distributions
+            # We assume budget can realistically swing by 10%, and hype can swing by 25%
+            simulated_budgets = np.random.normal(loc=budget, scale=budget * 0.10, size=n_simulations)
+            simulated_hype = np.random.normal(loc=expected_popularity, scale=expected_popularity * 0.25, size=n_simulations)
+            
+            # Update the simulated dataframe with our chaotic variables (preventing impossible numbers)
+            X_sim['budget'] = np.clip(simulated_budgets, a_min=100000, a_max=None)
+            X_sim['popularity'] = np.clip(simulated_hype, a_min=1.0, a_max=None)
+            
+            # Run all 1,000 alternate realities through XGBoost instantly
+            simulated_revenues = model.predict(X_sim)
+            simulated_revenues = np.maximum(simulated_revenues, 0)
+            
+            # Calculate the ROI for all 1,000 scenarios based on their simulated chaotic budgets
+            simulated_rois = ((simulated_revenues - X_sim['budget']) / X_sim['budget']) * 100
+            
+            # --- 3. EXTRACT RISK METRICS ---
+            # How many of the 1000 scenarios actually broke even (ROI > 0)?
+            prob_success = (simulated_rois > 0).mean() * 100 
+            
+            # The 5th percentile (Worst Case) and 95th percentile (Best Case)
+            worst_case_rev = np.percentile(simulated_revenues, 5)
+            best_case_rev = np.percentile(simulated_revenues, 95)
+            
+            # --- 4. DISPLAY THE DASHBOARD ---
+            st.success("Analysis & Simulation Complete!")
+            
+            st.subheader("1. The Baseline Forecast")
             res_col1, res_col2, res_col3 = st.columns(3)
+            res_col1.metric("Predicted Global Box Office", f"${base_revenue:,.0f}")
+            res_col2.metric("Projected Baseline ROI", f"{base_roi:.1f}%")
             
-            res_col1.metric("Predicted Global Box Office", f"${final_revenue:,.0f}")
-            res_col2.metric("Projected ROI", f"{roi:.1f}%")
-            
-            if roi > 20:
+            # We now base the Greenlight strictly on the Probability of Profit, not just a single ROI number
+            if prob_success >= 60:
                 res_col3.success("🟢 RECOMMENDATION: GREENLIGHT")
-            elif -10 <= roi <= 20:
-                res_col3.warning("🟡 RECOMMENDATION: REWRITE / NEGOTIATE BUDGET")
+            elif 40 <= prob_success < 60:
+                res_col3.warning("🟡 RECOMMENDATION: REVISE BUDGET")
             else:
                 res_col3.error("🔴 RECOMMENDATION: PASS")
                 
             st.markdown("---")
             
-            # 3. Build the Visual Bar Chart
-            st.subheader("Financial Breakdown")
+            st.subheader("2. Monte Carlo Risk Analysis (1,000 Simulations)")
+            st.markdown("We simulated this movie's release 1,000 times, injecting random real-world budget overruns and hype fluctuations to find your true probability of profitability.")
             
-            # Create a simple DataFrame specifically for the chart
+            risk_col1, risk_col2, risk_col3 = st.columns(3)
+            risk_col1.metric("Worst Case Scenario (Bottom 5%)", f"${worst_case_rev:,.0f}")
+            risk_col2.metric("Best Case Scenario (Top 5%)", f"${best_case_rev:,.0f}")
+            risk_col3.metric("Probability of Profitability", f"{prob_success:.1f}%")
+            
+            # --- 5. VISUALIZE THE RISK CURVE ---
+            st.markdown("### Box Office Probability Curve")
+            
+            # We use NumPy to create a histogram (bell curve) of the 1,000 simulated revenues
+            counts, bins = np.histogram(simulated_revenues, bins=30)
+            
+            # Format the chart data for Streamlit
             chart_data = pd.DataFrame({
-                "Category": ["Production Budget", "Predicted Box Office"],
-                "Amount ($)": [budget, final_revenue]
-            })
+                "Revenue Scenario ($)": bins[:-1],
+                "Frequency": counts
+            }).set_index("Revenue Scenario ($)")
             
-            # Set the Category as the index so Streamlit knows what to put on the X-axis
-            chart_data = chart_data.set_index("Category")
-            
-            # Draw the chart!
             st.bar_chart(chart_data)
                 
         except Exception as e:
